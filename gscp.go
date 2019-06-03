@@ -90,7 +90,7 @@ func push(scp *scplib.SCPClient) {
 		}
 		rpath, _ := remotePath(targets[i])
 
-		fmt.Println("pushing:" + rpath + " ...")
+		fmt.Println("pushing: local " + rpath + " to remote...")
 		// Close client connection after the file has been copied
 
 		// Close the file after it has been copied
@@ -119,6 +119,7 @@ func pull(scp *scplib.SCPClient) {
 		}
 		rpath, _ := remotePath(targets[i])
 		
+		fmt.Println("pulling: " + config["common.server"] +":"+ rpath + " to local...")
 		if scp.GetFile([]string{rpath},  targets[i]) != nil {
 			fmt.Println("Error while copying file ", err)
 		}
