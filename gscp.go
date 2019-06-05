@@ -69,7 +69,7 @@ func remotePath(path string) (string, error) {
 		return "", err
 	}
 
-	index := strings.Index(rlpath, config["common.delim"])
+	index := strings.LastIndex(rlpath, config["common.delim"])
 
 	rpath := fmt.Sprintf("%s/%s", config["common.remote"], rlpath[index:])
 
@@ -90,7 +90,7 @@ func push(scp *scplib.SCPClient) {
 		}
 		rpath, _ := remotePath(targets[i])
 
-		fmt.Println("pushing: local " + rpath + " to remote...")
+		fmt.Println("pushing:[local:]" + rpath + " to remote...")
 		// Close client connection after the file has been copied
 
 		// Close the file after it has been copied
