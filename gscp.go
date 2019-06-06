@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"github.com/blacknon/go-scplib"
 	"github.com/muja/goconfig"
-	"github.com/yookoala/realpath"
+	//"github.com/yookoala/realpath"
+	"path/filepath"
 	"golang.org/x/crypto/ssh"
 	"io/ioutil"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -63,7 +63,7 @@ func init() {
 	}
 }
 func remotePath(path string) (string, error) {
-	rlpath, err := realpath.Realpath(path)
+	rlpath, err := filepath.Abs(path)
 	if err != nil {
 		fmt.Printf("get file: [%s] realpath failed: %s\n", path, err)
 		return "", err
@@ -78,14 +78,42 @@ func remotePath(path string) (string, error) {
 	return rpath, nil
 
 }
+ func isFile(object string) (bool, error) {
 
+     fdir, err := os.Open(object)
+     if err != nil {
+         fmt.Println(err)
+         return false, err
+     }
+     defer fdir.Close()
+
+     finfo, err := fdir.Stat()
+
+     if err != nil {
+         fmt.Println(err)
+         return false, err
+     }
+
+     switch mode := finfo.Mode(); {
+
+     case mode.IsDir():
+         //fmt.Println("object is a directory")
+         return false, nil
+     case mode.IsRegular():
+         //fmt.Println("object is a file")
+        return true, nil
+     }
+         return false, nil
+ }
 func push(scp *scplib.SCPClient) {
 
 	for i, _ := range targets {
 		// Open a file
-		_, err := os.Stat(targets[i])
-		if err != nil {
-			fmt.Printf("open file: %s err: %s\n", targets[i], err)
+		//_, err := os.Stat(targets[i])
+		//if err != nil {
+		file, err :=isFile(targets[i]) 
+		if  err != nil || !file {
+			fmt.Printf("%s not a file or open failed, err: %s\n", targets[i], err)
 			continue
 		}
 		rpath, _ := remotePath(targets[i])
@@ -112,16 +140,37 @@ func pull(scp *scplib.SCPClient) {
 
 	for i, _ := range targets {
 		// Open a file
+		var fileCreated bool = false
 		_, err := os.Stat(targets[i])
-		if err != nil {
-			fmt.Printf("open file: %s err: %s\n", targets[i], err)
+		if os.IsNotExist(err) {
+			//maybe we should create a new FILE
+			//_, err = os.Stat(filepath.Dir(targets[i]))
+			file, err2 := os.Create(targets[i])
+			if err2 != nil {
+				fmt.Printf("%s  file not exists and create failed err: %s\n", targets[i], err2)
+				continue
+			}
+			fileCreated = true
+			file.Close()
+		} else if err != nil {
+				fmt.Printf("%s  open file  err: %s\n", targets[i], err)
+				continue
+		}
+		file, err :=isFile(targets[i]) 
+		if  err != nil || !file {
+			fmt.Printf("%s not a file or open failed, err: %s\n", targets[i], err)
 			continue
 		}
-		rpath, _ := remotePath(targets[i])
+		rpath, _ := remotePath(targets[i])   //how about a remote dir ?  we should check and skip
 		
 		fmt.Println("pulling: " + config["common.server"] +":"+ rpath + " to local...")
 		if scp.GetFile([]string{rpath},  targets[i]) != nil {
 			fmt.Println("Error while copying file ", err)
+			if fileCreated == true {        //the filed create should be deleted
+					if os.Remove(targets[i]) != nil {
+						fmt.Println("remove the new  file error: ", err)
+					}
+			}
 		}
 	}
 	
