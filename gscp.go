@@ -3,14 +3,15 @@ package main
 import (
 	"flag"
 	"fmt"
-	"github.com/blacknon/go-scplib"
 	"github.com/muja/goconfig"
+	"github.com/pkg/sftp"
 	//"github.com/yookoala/realpath"
-	"path/filepath"
 	"golang.org/x/crypto/ssh"
+	"io"
 	"io/ioutil"
 	"os"
 	"os/user"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -63,13 +64,19 @@ func init() {
 	}
 }
 func remotePath(path string) (string, error) {
+
 	rlpath, err := filepath.Abs(path)
+
 	if err != nil {
 		fmt.Printf("get file: [%s] realpath failed: %s\n", path, err)
 		return "", err
 	}
 
 	index := strings.LastIndex(rlpath, config["common.delim"])
+	if index < 0 {
+		//fmt.Printf("%s not found delim: %s\n", rlpath, config["common.delim"])
+		return "", fmt.Errorf("%s not found delim: %s", rlpath, config["common.delim"])
+	}
 
 	rpath := fmt.Sprintf("%s/%s", config["common.remote"], rlpath[index:])
 
@@ -78,64 +85,81 @@ func remotePath(path string) (string, error) {
 	return rpath, nil
 
 }
- func isFile(object string) (bool, error) {
+func isFile(object string) (bool, error) {
 
-     fdir, err := os.Open(object)
-     if err != nil {
-         fmt.Println(err)
-         return false, err
-     }
-     defer fdir.Close()
+	fdir, err := os.Open(object)
+	if err != nil {
+		fmt.Println(err)
+		return false, err
+	}
+	defer fdir.Close()
 
-     finfo, err := fdir.Stat()
+	finfo, err := fdir.Stat()
 
-     if err != nil {
-         fmt.Println(err)
-         return false, err
-     }
+	if err != nil {
+		fmt.Println(err)
+		return false, err
+	}
 
-     switch mode := finfo.Mode(); {
+	switch mode := finfo.Mode(); {
 
-     case mode.IsDir():
-         //fmt.Println("object is a directory")
-         return false, nil
-     case mode.IsRegular():
-         //fmt.Println("object is a file")
-        return true, nil
-     }
-         return false, nil
- }
-func push(scp *scplib.SCPClient) {
+	case mode.IsDir():
+		//fmt.Println("object is a directory")
+		return false, nil
+	case mode.IsRegular():
+		//fmt.Println("object is a file")
+		return true, nil
+	}
+	return false, nil
+}
+func push(scp *sftp.Client) {
 
 	for i, _ := range targets {
 		// Open a file
-		//_, err := os.Stat(targets[i])
-		//if err != nil {
-		file, err :=isFile(targets[i]) 
-		if  err != nil || !file {
-			fmt.Printf("%s not a file or open failed, err: %s\n", targets[i], err)
+		srcFile, err := os.Open(targets[i])
+		if err != nil {
+			//log.Fatal(err)
+			fmt.Printf("%s can not open, error: %s\n", targets[i], err)
 			continue
 		}
-		rpath, _ := remotePath(targets[i])
+		defer srcFile.Close()
 
-		fmt.Println("pushing:[local:]" + rpath + " to remote...")
-		// Close client connection after the file has been copied
-
-		// Close the file after it has been copied
-
-		// Finaly, copy the file over
-		// Usage: CopyFile(fileReader, remotePath, permission)
-
-		//err = client.CopyFile(f, rpath, "0655")
-		//err = scp.PutFile([]string{"./passwd"}, "./passwd_scp")
-		scp.PutFile([]string{targets[i]}, rpath)
-
+		finfo, err := srcFile.Stat()
 		if err != nil {
-			fmt.Println("Error while copying file ", err)
+			fmt.Printf("%s can not stat file or dir, error: %s\n", targets[i], err)
+			continue
 		}
+
+		if !finfo.Mode().IsRegular() {
+			fmt.Printf("%s is not regular file, transport file only\n", targets[i])
+			continue
+		}
+
+		rpath, err := remotePath(targets[i])
+		if err != nil {
+			fmt.Println(err)
+			continue
+		}
+
+		// create destination file
+		dstFile, err := scp.Create(rpath)
+		if err != nil {
+			fmt.Printf("%s create file  failed, error: %s", rpath, err)
+			continue
+		}
+		defer dstFile.Close()
+
+		_, err = io.Copy(dstFile, srcFile)
+		if err != nil {
+			//log.Fatal(err)
+			fmt.Printf("%s->%s scp file  failed, error: %s", targets[i], rpath, err)
+			continue
+		}
+		fmt.Println("pushing:[local:]" + rpath + " to remote...")
 	}
 }
 
+/*
 func pull(scp *scplib.SCPClient) {
 
 	for i, _ := range targets {
@@ -156,13 +180,13 @@ func pull(scp *scplib.SCPClient) {
 				fmt.Printf("%s  open file  err: %s\n", targets[i], err)
 				continue
 		}
-		file, err :=isFile(targets[i]) 
+		file, err :=isFile(targets[i])
 		if  err != nil || !file {
 			fmt.Printf("%s not a file or open failed, err: %s\n", targets[i], err)
 			continue
 		}
 		rpath, _ := remotePath(targets[i])   //how about a remote dir ?  we should check and skip
-		
+
 		fmt.Println("pulling: " + config["common.server"] +":"+ rpath + " to local...")
 		if scp.GetFile([]string{rpath},  targets[i]) != nil {
 			fmt.Println("Error while copying file ", err)
@@ -173,9 +197,9 @@ func pull(scp *scplib.SCPClient) {
 			}
 		}
 	}
-	
-}
 
+}
+*/
 func main() {
 	// Read Private key
 	key, err := ioutil.ReadFile(homeDir + "/.ssh/id_rsa")
@@ -210,14 +234,15 @@ func main() {
 	defer connection.Close()
 
 	// Create scp client
-	scp := new(scplib.SCPClient)
-	scp.Permission = false // copy permission with scp flag
-	scp.Connection = connection
+	//scp := new(scplib.SCPClient)
+	scp, err := sftp.NewClient(connection)
+	//scp.Permission = false // copy permission with scp flag
+	//scp.Connection = connection
 
 	if mode == "push" {
 		push(scp)
 	} else {
-		pull(scp)
+		//pull(scp)
 	}
 
 }
