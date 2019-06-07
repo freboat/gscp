@@ -6,12 +6,12 @@ import (
 	"github.com/muja/goconfig"
 	"github.com/pkg/sftp"
 	//"github.com/yookoala/realpath"
+	"path/filepath"
 	"golang.org/x/crypto/ssh"
 	"io"
 	"io/ioutil"
 	"os"
 	"os/user"
-	"path/filepath"
 	"strings"
 	"time"
 )
@@ -75,7 +75,7 @@ func remotePath(path string) (string, error) {
 	index := strings.LastIndex(rlpath, config["common.delim"])
 	if index < 0 {
 		//fmt.Printf("%s not found delim: %s\n", rlpath, config["common.delim"])
-		return "", fmt.Errorf("%s not found delim: %s", rlpath, config["common.delim"])
+		return "",  fmt.Errorf("%s not found delim: %s", rlpath, config["common.delim"])
 	}
 
 	rpath := fmt.Sprintf("%s/%s", config["common.remote"], rlpath[index:])
@@ -85,121 +85,134 @@ func remotePath(path string) (string, error) {
 	return rpath, nil
 
 }
-func isFile(object string) (bool, error) {
 
-	fdir, err := os.Open(object)
-	if err != nil {
-		fmt.Println(err)
-		return false, err
-	}
-	defer fdir.Close()
-
-	finfo, err := fdir.Stat()
-
-	if err != nil {
-		fmt.Println(err)
-		return false, err
-	}
-
-	switch mode := finfo.Mode(); {
-
-	case mode.IsDir():
-		//fmt.Println("object is a directory")
-		return false, nil
-	case mode.IsRegular():
-		//fmt.Println("object is a file")
-		return true, nil
-	}
-	return false, nil
-}
 func push(scp *sftp.Client) {
 
 	for i, _ := range targets {
 		// Open a file
 		srcFile, err := os.Open(targets[i])
 		if err != nil {
-			//log.Fatal(err)
-			fmt.Printf("%s can not open, error: %s\n", targets[i], err)
-			continue
+		   //log.Fatal(err)
+		   fmt.Printf("%s can not open, error: %s\n",  targets[i], err);
+			continue;
 		}
 		defer srcFile.Close()
-
+		
 		finfo, err := srcFile.Stat()
-		if err != nil {
-			fmt.Printf("%s can not stat file or dir, error: %s\n", targets[i], err)
-			continue
-		}
+		 if err != nil {
+		   fmt.Printf("%s can not stat file or dir, error: %s\n",  targets[i], err);
+			continue;			 
+		 }
 
 		if !finfo.Mode().IsRegular() {
-			fmt.Printf("%s is not regular file, transport file only\n", targets[i])
-			continue
+		   fmt.Printf("%s is not regular file, transport file only\n", targets[i]);
+			continue;				
 		}
 
 		rpath, err := remotePath(targets[i])
 		if err != nil {
-			fmt.Println(err)
-			continue
+			fmt.Println(err);
+			continue;
 		}
 
 		// create destination file
 		dstFile, err := scp.Create(rpath)
 		if err != nil {
 			fmt.Printf("%s create file  failed, error: %s", rpath, err)
-			continue
+			continue;
 		}
-		defer dstFile.Close()
-
+		defer dstFile.Close()		
+		
 		_, err = io.Copy(dstFile, srcFile)
 		if err != nil {
-			//log.Fatal(err)
-			fmt.Printf("%s->%s scp file  failed, error: %s", targets[i], rpath, err)
-			continue
+		   //log.Fatal(err)
+		   	fmt.Printf("%s->%s scp file  failed, error: %s", targets[i], rpath, err)
+			continue;
 		}
 		fmt.Println("pushing:[local:]" + rpath + " to remote...")
 	}
 }
 
-/*
-func pull(scp *scplib.SCPClient) {
-
+func pull(scp *sftp.Client) {
 	for i, _ := range targets {
-		// Open a file
-		var fileCreated bool = false
-		_, err := os.Stat(targets[i])
+		
+		// check dst file
+		var newFile bool = false
+		var  succ  bool = false
+		var fileTrans string = ""
+		finfo, err := os.Stat(targets[i])
+		if err==nil && !finfo.Mode().IsRegular() {
+		   fmt.Printf("%s is not regular file, transport file only\n", targets[i]);
+			continue;				
+		}
 		if os.IsNotExist(err) {
 			//maybe we should create a new FILE
 			//_, err = os.Stat(filepath.Dir(targets[i]))
-			file, err2 := os.Create(targets[i])
-			if err2 != nil {
-				fmt.Printf("%s  file not exists and create failed err: %s\n", targets[i], err2)
-				continue
-			}
-			fileCreated = true
-			file.Close()
-		} else if err != nil {
-				fmt.Printf("%s  open file  err: %s\n", targets[i], err)
-				continue
+			newFile = true
+			fileTrans = targets[i];
+		} else {			
+			fileTrans = targets[i] + ".scping"
 		}
-		file, err :=isFile(targets[i])
-		if  err != nil || !file {
-			fmt.Printf("%s not a file or open failed, err: %s\n", targets[i], err)
+		//dstFile, err := os.Create(targets[i])
+		dstFile, err := os.OpenFile(fileTrans, os.O_WRONLY|os.O_TRUNC|os.O_CREATE, os.ModePerm)
+		if err != nil {
+			fmt.Printf("%s  file not exists and create failed err: %s\n", targets[i], err)
 			continue
 		}
-		rpath, _ := remotePath(targets[i])   //how about a remote dir ?  we should check and skip
+		defer dstFile.Close()
+		rpath, err := remotePath(targets[i])   
+		if err!=nil {
+			fmt.Println("get remote file path err: %s\n", err);
+			//goto END
+		}
+		
+		srcFile, err := scp.Open(rpath)
+		if err != nil {
+		   fmt.Printf("%s open remote file failed, error: %s\n", rpath, err);
+		   //continue;
+		   goto END
+		}
+		defer srcFile.Close()
 
-		fmt.Println("pulling: " + config["common.server"] +":"+ rpath + " to local...")
-		if scp.GetFile([]string{rpath},  targets[i]) != nil {
-			fmt.Println("Error while copying file ", err)
-			if fileCreated == true {        //the filed create should be deleted
-					if os.Remove(targets[i]) != nil {
-						fmt.Println("remove the new  file error: ", err)
-					}
+		// copy source file to destination file
+		_, err = io.Copy(dstFile, srcFile)
+		if err != nil {
+		   fmt.Printf("%s copy file failed, error: %s\n", rpath, err);
+		   //continue;
+			 goto END
+		}
+
+		// flush in-memory copy
+		err = dstFile.Sync()
+		if err != nil {
+		   fmt.Printf("%s copy file failed, error: %s\n", rpath, err);
+		   //continue;
+		   goto END
+		}
+		
+		succ = true
+		fmt.Println("pulling:[remote:]" + rpath + " to local...")
+
+END:
+		if succ == true {
+			   if newFile==true {
+				   continue
+			   }
+			if os.Remove(targets[i]) != nil {
+				fmt.Println("remove the exist  file error: ", err)
+			}
+			if os.Rename(fileTrans, targets[i]) != nil {
+				fmt.Printf("rename %s to %s failed, err: %s\n", fileTrans, targets[i], err)
+			}
+		} else {      //failed, remote the temp file
+			if os.Remove(fileTrans) != nil {
+				fmt.Printf("remove the tmp  file: %s error:  %s\n", fileTrans, err)
 			}
 		}
 	}
-
+	
 }
-*/
+
 func main() {
 	// Read Private key
 	key, err := ioutil.ReadFile(homeDir + "/.ssh/id_rsa")
@@ -242,7 +255,7 @@ func main() {
 	if mode == "push" {
 		push(scp)
 	} else {
-		//pull(scp)
+		pull(scp)
 	}
 
 }
