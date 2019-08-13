@@ -5,3 +5,8 @@
 	remote = /data/brook/prj/repos
 	local = /home/brook/prj/repo
 	server = 10.224.172.25:22
+[tpgw]
+	user = orangepi
+	passwd = orangepi
+	file = /home/brook/test.txt
+	remote = /home/orangepi/tpgw.txt

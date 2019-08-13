@@ -20,6 +20,8 @@ var mode string
 var targets []string
 var config map[string]string
 var homeDir string
+var server string
+
 
 func readConfig() (map[string]string, error) {
 
@@ -52,13 +54,19 @@ func init() {
 				targets = append(targets, flag.Args()[i])
 			}
 		} else {
-			mode = config["common.mode"]
-			targets = flag.Args()
+            //if not the file, then the mode
+            if _, err := os.Stat(flag.Args()[0]); err==nil {
+                mode = config["common.mode"]
+                targets = flag.Args()
+            } else {
+                mode = flag.Args()[0]
+                server =  flag.Args()[1]
+            }
 		}
 	}
 
 	// quit if no target can be determined
-	if len(targets) == 0 {
+	if len(targets) == 0 && (mode=="pull"||mode=="push")  {
 		fmt.Println("plz specify a file at least")
 		os.Exit(1)
 	}
@@ -213,6 +221,48 @@ END:
 	
 }
 
+func scpf(scp *sftp.Client) {
+     
+    // Open a file
+    srcFile, err := os.Open(config[mode+".file"])
+    if err != nil {
+       //log.Fatal(err)
+       fmt.Printf("%s can not open, error: %s\n", config[mode+".file"], err);
+        return;
+    }
+    defer srcFile.Close()
+		
+    finfo, err := srcFile.Stat()
+     if err != nil {
+       fmt.Printf("%s can not stat file or dir, error: %s\n",  config[mode+".file"], err);
+        return ;			 
+     }
+
+    if !finfo.Mode().IsRegular() {
+       fmt.Printf("%s is not regular file, transport file only\n", config[mode+".file"]);
+        return ;				
+    }
+
+
+    // create destination file
+    dstFile, err := scp.Create(config[mode+".remote"])
+    if err != nil {
+        fmt.Printf("%s create file  failed, error: %s",  config[mode+".file"], err)
+        return;
+    }
+    defer dstFile.Close()		
+		
+    _, err = io.Copy(dstFile, srcFile)
+    if err != nil {
+       //log.Fatal(err)
+        fmt.Printf("%s->%s scp file  failed, error: %s", config[mode+".file"], config[mode+".remote"], err)
+        return;
+    }
+    fmt.Println("pushing:[local:]" + mode + " to remote...")    
+    
+}
+
+
 func main() {
 	// Read Private key
 	key, err := ioutil.ReadFile(homeDir + "/.ssh/id_rsa")
@@ -235,11 +285,27 @@ func main() {
 			ssh.PublicKeys(signer),
 		},
 		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
-		Timeout:         60 * time.Second,
+		Timeout:         2 * time.Second,
 	}
-
+    
+    Server := config["common.server"]
+    
+    if mode != "push" && mode != "pull" {
+        
+        sconfig = &ssh.ClientConfig{
+                User: config[mode+".user"],
+                Auth: []ssh.AuthMethod{
+                        ssh.Password(config[mode+".passwd"]),
+                },
+                HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+                Timeout:         12 * time.Second,
+        }
+        Server = server+":22"
+    }
+    
+    
 	// Create ssh connection
-	connection, err := ssh.Dial("tcp", config["common.server"], sconfig)
+	connection, err := ssh.Dial("tcp", Server, sconfig)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to dial: %s\n", err)
 		os.Exit(1)
@@ -252,10 +318,14 @@ func main() {
 	//scp.Permission = false // copy permission with scp flag
 	//scp.Connection = connection
 
-	if mode == "push" {
-		push(scp)
-	} else {
-		pull(scp)
-	}
+    switch mode {
+        case "push":
+            push(scp)
+        case "pull":
+            pull(scp)
+        default:
+            scpf(scp)
+    }
+
 
 }
